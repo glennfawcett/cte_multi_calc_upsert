@@ -42,7 +42,6 @@ insert_li as (
        (case when l.lid is null then i.lid else l.lid end),
        (case when l.oid is null then i.oid else l.oid end),
        i.quantity
-       --(case when l.quantity is null then i.quantity else i.quantity end) 
      from input_cte as i
      full outer join lineitem as l on (l.oid=i.oid and l.lid=i.lid)
     on conflict (lid, oid)
@@ -72,36 +71,8 @@ insert_li as (
        (case when l.lid is null then i.lid else l.lid end),
        (case when l.oid is null then i.oid else l.oid end),
        i.quantity
-       --(case when l.quantity is null then i.quantity else i.quantity end) 
      from input_cte as i
      full outer join lineitem as l on (l.oid=i.oid and l.lid=i.lid)
-    on conflict (lid, oid)
-    do update set quantity= case when excluded.quantity is null then lineitem.quantity else excluded.quantity end
-  returning (lid),(oid),(quantity)
-)
-insert into orders select oid, sum(quantity)::int from insert_li where oid=1 group by oid
-  on conflict(oid)
-  do update set sum_item_quantity = excluded.sum_item_quantity
-returning (oid),(sum_item_quantity);
-
--- Check Results
---
-select * from orders;
-select * from lineitem;
-
-
-
--- CTE UPDATE single statement if Order exists
---
-with input_cte as (
-   select column1 as lid, column2 as oid, column3 as quantity
-   from (values(1,1,1),(2,1,1),(3,1,1),(4,1,5),(5,1,3))
-),
-insert_li as (
-  insert into lineitem
-     select l.lid, l.oid, i.quantity 
-     from lineitem as l
-     right outer join input_cte as i on (l.oid=i.oid and l.lid=i.lid)
     on conflict (lid, oid)
     do update set quantity= case when excluded.quantity is null then lineitem.quantity else excluded.quantity end
   returning (lid),(oid),(quantity)
