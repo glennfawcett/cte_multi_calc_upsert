@@ -9,16 +9,55 @@ create table lineitem
   lid int,
   oid int,
   quantity int,
-  primary key(lid, oid)
+  primary key(oid,lid)
 );
 
--- Multi-Statement transaction /w explicit BEGIN;  COMMIT;
+-- create table lineitem
+-- (
+--   lid int,
+--   oid int,
+--   quantity int,
+--   primary key(lid,oid)
+-- );
+create table orders2
+(
+  oid int primary key,
+  sum_item_quantity int
+);
+
+create table lineitem2
+(
+  lid int,
+  oid int,
+  quantity int,
+  primary key(oid,lid)
+);
+
+-- Multi-Statement transaction /w optimistic locking
 --
 BEGIN;
-  insert into orders values (1,0);
-  insert into lineitem values (1,1,1),(2,1,1),(3,1,1),(4,1,2),(5,1,3);
+
+  insert into orders values (1,0) on conflict(oid) do nothing;
+  insert into lineitem values (1,1,1),(2,1,1),(3,1,1),(4,1,2),(5,1,3) on conflict(lid,oid) do nothing;
   update orders set sum_item_quantity = (select sum(quantity) from lineitem where oid=1)::int where oid=1;
+  
 COMMIT;
+
+-- Multi-Statement transaction /w SFU
+--
+BEGIN;
+
+select o.oid, o.sum_item_quantity, l.lid 
+from orders as o 
+join lineitem as l
+  on (o.oid = l.oid) for update;
+
+  insert into orders values (1,0) on conflict(oid) do nothing;
+  insert into lineitem values (1,1,1),(2,1,1),(3,1,1),(4,1,2),(5,1,3) on conflict(lid,oid) do nothing;
+  update orders set sum_item_quantity = (select sum(quantity) from lineitem where oid=1)::int where oid=1;
+  
+COMMIT;
+
 
 -- Check Results
 --

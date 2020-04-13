@@ -33,7 +33,8 @@ COMMIT;
 ```
 
 Next a batch of 5 inserts into `lineitem` table are run to populate the order and calculate the summary values for the `order`:
-```sql  
+```sql 
+BEGIN; 
   insert into lineitem values (1,1,1)
   update orders set sum_item_quantity = (select sum(quantity) from lineitem where oid=1)::int where oid=1;
 COMMIT;
@@ -103,4 +104,85 @@ insert into orders select oid, sum(quantity)::int from insert_li where oid=1 gro
   on conflict(oid)
   do update set sum_item_quantity = excluded.sum_item_quantity
 returning (oid),(sum_item_quantity);
+```
+
+## JMETER tests
+Running some tests with JMETER to show how to effectively write CTEs to batch together items from a particiluar order so as to not conflict on the same *order* and still be able to scale up the overall throughput.
+
+Jmeter has the `${__threadNum}` variable and the `${__Random(1,2)}` function.  I used this the `${__threadNum}` variable to as the primary key on the `orders` table simulate batching together multiple values by order.  Then, I used the `${__Random(1,1000)}` function to simulate the probability of updating the `quantity` within an order for one item of the 5 total items.  Basically, ~20% of items will be updated and 80% will stay the same.
+
+Below are the two examples of how this is done.
+
+```sql
+-----
+----- MULTI
+-----
+insert into orders2 values (${__threadNum},0) on conflict do nothing;
+
+insert into lineitem2 values 
+  (1,${__threadNum},${__Random(1,2)}),
+  (2,${__threadNum},${__Random(1,2)}),
+  (3,${__threadNum},${__Random(1,2)}),
+  (4,${__threadNum},${__Random(1,2)}),
+  (5,${__threadNum},${__Random(1,2)}) 
+  on conflict(lid,oid) do update set quantity=excluded.quantity;
+
+update orders2 
+set sum_item_quantity=(select sum(quantity) 
+from lineitem2 where oid=${__threadNum})::int where oid=${__threadNum};
+```
+
+```sql
+-----
+----- CTE
+-----
+with insert_li as (
+  insert into lineitem2
+  values (1,${__threadNum},${__Random(1,2)}),
+         (2,${__threadNum},${__Random(1,2)}),
+         (3,${__threadNum},${__Random(1,2)}),
+         (4,${__threadNum},${__Random(1,2)}),
+         (5,${__threadNum},${__Random(1,2)})
+  on conflict (lid, oid)
+    do update set quantity=excluded.quantity
+  returning (lid),(oid),(quantity)
+),
+sum_not_in_new as (
+select sum(ifnull(quantity,0))::int as newsum from lineitem2 where oid=${__threadNum}
+      and (lid not in (select lid from insert_li))
+)
+insert into orders2
+select
+ ${__threadNum},
+ -- calculate the sum of new values
+ (( select sum(quantity)::int from insert_li where oid=${__threadNum}) +
+ -- calculate the sum of existing values that are NOT updated
+ ( select ifnull(newsum,0) from sum_not_in_new ))
+  on conflict(oid)
+  do update set sum_item_quantity = excluded.sum_item_quantity
+returning (oid),(sum_item_quantity);
+```
+
+### Range Split and Merge
+```sql
+SHOW CLUSTER SETTING kv.range_split.by_load_enabled;
+SHOW CLUSTER SETTING kv.range_split.load_qps_threshold;
+SHOW CLUSTER SETTING kv.range_merge.queue_enabled;
+
+SET CLUSTER SETTING kv.range_split.by_load_enabled = true;
+SET CLUSTER SETTING kv.range_split.load_qps_threshold = 200;
+SET CLUSTER SETTING kv.range_merge.queue_enabled = true;
+```
+
+```sql
+-- Configure Diagnostics Reporting Interval
+SHOW CLUSTER SETTING diagnostics.reporting.interval;
+SET CLUSTER SETTING diagnostics.reporting.interval = '24hr';
+```
+
+After it has run a while....
+
+```sql
+show ranges from table lineitem2;
+show ranges from table orders2;
 ```
