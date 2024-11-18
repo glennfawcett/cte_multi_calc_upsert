@@ -1,12 +1,5 @@
 # Transactional CTEs with CockroachDB
-
-jflksj
-jfkljkl
-
-
-## Rollup
-example...
-
+More examples of transactional CTEs.
 
 ## Data Mover 
 
